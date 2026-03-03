@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public client writes are blocked.
+    // This service is expected to write through Firebase Admin SDK only.
+    match /github-summaries/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}
