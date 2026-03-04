@@ -145,7 +145,7 @@ async function generateSummaryFromBody(body) {
     actionItems: generated.actionItems,
     model: normalized.model,
     version: 'v1',
-    metadata: normalized.metadata,
+    ...(normalized.metadata !== undefined ? { metadata: normalized.metadata } : {}),
   };
 
   const id = await persistSummary(doc);
