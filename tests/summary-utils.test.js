@@ -108,10 +108,9 @@ test('buildMarkdownSummary wraps summary in frontmatter and markdown sections', 
     actionItems: ['Do something'],
   });
 
-  assert.match(markdown, /^---\n/);
-  assert.match(markdown, /title: "octocat\/Hello-World"/);
-  assert.match(markdown, /repo_url: https:\/\/github.com\/octocat\/Hello-World/);
-  assert.match(markdown, /# octocat\/Hello-World/);
+  assert.match(markdown, /^# octocat\/Hello-World/);
+  assert.match(markdown, /Repository: https:\/\/github.com\/octocat\/Hello-World/);
+  assert.match(markdown, /Tags: github, repository, octocat, javascript, html/);
   assert.match(markdown, /## Key Points/);
   assert.match(markdown, /## Action Items/);
 });
