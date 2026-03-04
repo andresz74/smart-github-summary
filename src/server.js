@@ -4,9 +4,11 @@ import express from 'express';
 import { initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import {
+  buildMarkdownSummary,
   DEFAULT_MODEL,
   docIdFor,
   extractSummaryPayload,
+  extractTranscriptMetadata,
   normalizeRequestBody,
 } from './summary-utils.js';
 
@@ -109,6 +111,15 @@ async function getCachedSummary(normalized) {
 
   const data = snap.data() || {};
   if (typeof data.summary !== 'string' || !data.summary.trim()) return null;
+  const summary = data.summary.startsWith('---')
+    ? data.summary
+    : buildMarkdownSummary({
+        normalized,
+        metadata: extractTranscriptMetadata(normalized.content),
+        summary: data.summary,
+        keyPoints: Array.isArray(data.keyPoints) ? data.keyPoints : [],
+        actionItems: Array.isArray(data.actionItems) ? data.actionItems : [],
+      });
 
   return {
     id,
@@ -116,7 +127,7 @@ async function getCachedSummary(normalized) {
     type: data.type || normalized.type,
     sourceId: data.sourceId || normalized.sourceId,
     title: data.title || normalized.title,
-    summary: data.summary,
+    summary,
     keyPoints: Array.isArray(data.keyPoints) ? data.keyPoints : [],
     actionItems: Array.isArray(data.actionItems) ? data.actionItems : [],
     model: data.model || normalized.model,
@@ -164,17 +175,30 @@ async function generateSummaryFromBody(body) {
     throw err;
   }
 
+  const metadata = extractTranscriptMetadata(normalized.content);
+  const summary = buildMarkdownSummary({
+    normalized,
+    metadata,
+    summary: generated.summary,
+    keyPoints: generated.keyPoints,
+    actionItems: generated.actionItems,
+  });
+
   const doc = {
     repo: normalized.repo,
     type: normalized.type,
     sourceId: normalized.sourceId,
     title: normalized.title,
-    summary: generated.summary,
+    summary,
     keyPoints: generated.keyPoints,
     actionItems: generated.actionItems,
     model: normalized.model,
     version: 'v1',
-    ...(normalized.metadata !== undefined ? { metadata: normalized.metadata } : {}),
+    metadata: {
+      repoUrl: normalized.metadata?.repoUrl || '',
+      description: metadata.description,
+      languages: metadata.languages,
+    },
   };
 
   const id = await persistSummary(doc);
