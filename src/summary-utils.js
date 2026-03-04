@@ -38,6 +38,10 @@ function safeString(value, fallback = '') {
   return String(value);
 }
 
+function safeUrl(value) {
+  return safeString(value).trim();
+}
+
 function toYamlList(tags) {
   if (!Array.isArray(tags) || tags.length === 0) return '  - github\n  - repository';
   return tags.map(tag => `  - ${safeString(tag)}`).join('\n');
@@ -58,6 +62,97 @@ function normalizeTag(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function encodePathSegments(path) {
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
+}
+
+function normalizeRelativePath(path) {
+  const parts = [];
+  safeString(path)
+    .split('/')
+    .forEach((part) => {
+      if (!part || part === '.') return;
+      if (part === '..') {
+        parts.pop();
+        return;
+      }
+      parts.push(part);
+    });
+  return parts.join('/');
+}
+
+function extractReadmeSection(content) {
+  const match = safeString(content).match(/README:\n([\s\S]*?)\n\nSampled files:/);
+  return match?.[1]?.trim() || '';
+}
+
+function resolveReadmeImageUrl(imagePath, { repoUrl, defaultBranch }) {
+  const rawPath = safeString(imagePath).trim();
+  if (!rawPath) return '';
+  if (/^(https?:|data:)/i.test(rawPath)) {
+    return rawPath.replace('/blob/', '/raw/');
+  }
+
+  const baseRepoUrl = safeUrl(repoUrl).replace(/\/$/, '');
+  if (!baseRepoUrl) return '';
+
+  const branch = safeString(defaultBranch, 'main') || 'main';
+  const relativePath = normalizeRelativePath(rawPath.replace(/^\/+/, ''));
+  if (!relativePath) return '';
+  return `${baseRepoUrl}/raw/${encodeURIComponent(branch)}/${encodePathSegments(relativePath)}`;
+}
+
+function extractReadmeImageUrl(content, metadata) {
+  const readme = extractReadmeSection(content);
+  if (!readme) return '';
+
+  const markdownImage = readme.match(/!\[[^\]]*\]\(([^)]+)\)/);
+  if (markdownImage?.[1]) {
+    return resolveReadmeImageUrl(markdownImage[1], metadata);
+  }
+
+  const htmlImage = readme.match(/<img[^>]+src=["']([^"']+)["']/i);
+  if (htmlImage?.[1]) {
+    return resolveReadmeImageUrl(htmlImage[1], metadata);
+  }
+
+  return '';
+}
+
+function repoDisplayName(repo) {
+  const slug = safeString(repo).split('/').pop() || safeString(repo);
+  if (!slug) return 'Repository';
+  return slug.charAt(0).toUpperCase() + slug.slice(1);
+}
+
+function prefixSummaryWithRepoLink(summary, { repo, repoUrl }) {
+  const text = safeString(summary).trim();
+  if (!text || !repoUrl) return text;
+
+  const repoSlug = safeString(repo).split('/').pop() || safeString(repo);
+  const displayName = repoDisplayName(repo);
+  const linkedName = `**[${displayName}](${repoUrl})**`;
+  const escapedRepo = safeString(repo).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedSlug = safeString(repoSlug).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const patterns = [
+    new RegExp(`^(?:\\*\\*)?${escapedRepo}(?:\\*\\*)?\\s+`, 'i'),
+    new RegExp(`^(?:\\*\\*)?${escapedSlug}(?:\\*\\*)?\\s+`, 'i'),
+  ];
+
+  for (const pattern of patterns) {
+    if (pattern.test(text)) {
+      const rest = text.replace(pattern, '').trimStart();
+      return rest ? `${linkedName} ${rest}` : linkedName;
+    }
+  }
+
+  return `${linkedName} ${text}`;
 }
 
 export function extractTranscriptMetadata(content) {
@@ -83,17 +178,35 @@ export function extractTranscriptMetadata(content) {
   };
 }
 
+export function enrichMetadataFromTranscript(normalized) {
+  const transcriptMetadata = extractTranscriptMetadata(normalized.content);
+  const mergedMetadata = {
+    ...transcriptMetadata,
+    ...(normalized.metadata || {}),
+  };
+
+  return {
+    ...mergedMetadata,
+    image: extractReadmeImageUrl(normalized.content, {
+      repoUrl: mergedMetadata.repoUrl,
+      defaultBranch: mergedMetadata.defaultBranch,
+    }),
+  };
+}
+
 export function buildSummaryFrontmatter({ normalized, metadata, tags }) {
   const today = new Date().toISOString().slice(0, 10);
   const title = safeString(normalized.repo || metadata.repo || 'unknown/unknown');
   const description = metadata.description || `Summary for ${title}`;
   const repoUrl = safeString(normalized.metadata?.repoUrl || normalized.metadata?.url || '');
+  const image = safeString(metadata.image);
 
   return `---
 title: "${title}"
 date: ${today}
 type: ${safeString(normalized.type, 'digest')}
 description: ${toYamlBlock(description)}
+image: '${image}'
 tags:
 ${toYamlList(tags)}
 repo: ${title}
@@ -115,12 +228,21 @@ export function buildMarkdownSummary({ normalized, metadata, summary, keyPoints,
     .map(normalizeTag)
     .filter(Boolean);
   const tags = [...new Set(tagInputs)].slice(0, 8);
+  const linkedSummary = prefixSummaryWithRepoLink(summary, {
+    repo: normalized.repo || metadata.repo,
+    repoUrl: normalized.metadata?.repoUrl || normalized.metadata?.url || '',
+  });
 
   const sections = [
     buildSummaryFrontmatter({ normalized, metadata, tags }),
     '',
-    summary.trim(),
   ];
+
+  if (metadata.image) {
+    sections.push(`![](${metadata.image})`, '');
+  }
+
+  sections.push(linkedSummary.trim());
 
   if (keyPoints.length > 0) {
     sections.push('', '## Key Points', ...keyPoints.map(point => `- ${point}`));

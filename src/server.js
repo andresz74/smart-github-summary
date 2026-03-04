@@ -7,8 +7,8 @@ import {
   buildMarkdownSummary,
   DEFAULT_MODEL,
   docIdFor,
+  enrichMetadataFromTranscript,
   extractSummaryPayload,
-  extractTranscriptMetadata,
   normalizeRequestBody,
 } from './summary-utils.js';
 
@@ -115,7 +115,7 @@ async function getCachedSummary(normalized) {
     ? data.summary
     : buildMarkdownSummary({
         normalized,
-        metadata: extractTranscriptMetadata(normalized.content),
+        metadata: enrichMetadataFromTranscript(normalized),
         summary: data.summary,
         keyPoints: Array.isArray(data.keyPoints) ? data.keyPoints : [],
         actionItems: Array.isArray(data.actionItems) ? data.actionItems : [],
@@ -175,7 +175,7 @@ async function generateSummaryFromBody(body) {
     throw err;
   }
 
-  const metadata = extractTranscriptMetadata(normalized.content);
+  const metadata = enrichMetadataFromTranscript(normalized);
   const summary = buildMarkdownSummary({
     normalized,
     metadata,
@@ -196,8 +196,10 @@ async function generateSummaryFromBody(body) {
     version: 'v1',
     metadata: {
       repoUrl: normalized.metadata?.repoUrl || '',
+      defaultBranch: normalized.metadata?.defaultBranch || '',
       description: metadata.description,
       languages: metadata.languages,
+      image: metadata.image,
     },
   };
 
