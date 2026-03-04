@@ -102,6 +102,30 @@ async function persistSummary(input) {
   return id;
 }
 
+async function getCachedSummary(normalized) {
+  const id = docIdFor(normalized);
+  const snap = await db.collection(COLLECTION).doc(id).get();
+  if (!snap.exists) return null;
+
+  const data = snap.data() || {};
+  if (typeof data.summary !== 'string' || !data.summary.trim()) return null;
+
+  return {
+    id,
+    repo: data.repo || normalized.repo,
+    type: data.type || normalized.type,
+    sourceId: data.sourceId || normalized.sourceId,
+    title: data.title || normalized.title,
+    summary: data.summary,
+    keyPoints: Array.isArray(data.keyPoints) ? data.keyPoints : [],
+    actionItems: Array.isArray(data.actionItems) ? data.actionItems : [],
+    model: data.model || normalized.model,
+    version: data.version || 'v1',
+    ...(data.metadata !== undefined ? { metadata: data.metadata } : {}),
+    fromCache: true,
+  };
+}
+
 async function setRequestStatus(requestId, patch) {
   await db
     .collection(REQUESTS_COLLECTION)
@@ -122,6 +146,11 @@ async function generateSummaryFromBody(body) {
     const err = new Error('Missing content/transcript in payload');
     err.statusCode = 400;
     throw err;
+  }
+
+  const cached = await getCachedSummary(normalized);
+  if (cached) {
+    return cached;
   }
 
   const aiResponse = await callAiAccessForSummary(normalized);
@@ -149,7 +178,7 @@ async function generateSummaryFromBody(body) {
   };
 
   const id = await persistSummary(doc);
-  return { id, ...doc };
+  return { id, ...doc, fromCache: false };
 }
 
 app.get('/health', (_req, res) => {
@@ -168,7 +197,7 @@ app.post('/api/github-summary-v1', async (req, res) => {
       ok: true,
       collection: COLLECTION,
       id: result.id,
-      fromCache: false,
+      fromCache: result.fromCache,
       summary: result.summary,
       keyPoints: result.keyPoints,
       actionItems: result.actionItems,
@@ -190,6 +219,30 @@ app.post('/api/github-summary-v1/async', async (req, res) => {
   }
 
   const requestId = crypto.randomUUID();
+  const normalized = normalizeRequestBody(req.body || {});
+  const cached = normalized.content ? await getCachedSummary(normalized) : null;
+
+  if (cached) {
+    await setRequestStatus(requestId, {
+      status: 'succeeded',
+      result: {
+        summary: cached.summary,
+        keyPoints: cached.keyPoints,
+        actionItems: cached.actionItems,
+        id: cached.id,
+        fromCache: true,
+      },
+    });
+
+    res.status(202).json({
+      ok: true,
+      requestId,
+      status: 'succeeded',
+      statusUrl: `/api/github-summary-v1/status/${requestId}`,
+    });
+    return;
+  }
+
   await setRequestStatus(requestId, { status: 'queued' });
 
   setImmediate(async () => {
@@ -203,6 +256,7 @@ app.post('/api/github-summary-v1/async', async (req, res) => {
           keyPoints: result.keyPoints,
           actionItems: result.actionItems,
           id: result.id,
+          fromCache: result.fromCache,
         },
       });
     } catch (error) {
