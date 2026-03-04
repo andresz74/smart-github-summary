@@ -38,6 +38,20 @@ function safeString(value, fallback = '') {
   return String(value);
 }
 
+function toYamlList(tags) {
+  if (!Array.isArray(tags) || tags.length === 0) return '  - github\n  - repository';
+  return tags.map(tag => `  - ${safeString(tag)}`).join('\n');
+}
+
+function toYamlBlock(value) {
+  const text = safeString(value);
+  return '|\n' + text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => `  ${line}`)
+    .join('\n');
+}
+
 function normalizeTag(value) {
   return safeString(value)
     .trim()
@@ -69,6 +83,28 @@ export function extractTranscriptMetadata(content) {
   };
 }
 
+export function buildSummaryFrontmatter({ normalized, metadata, tags }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const title = safeString(normalized.repo || metadata.repo || 'unknown/unknown');
+  const description = metadata.description || `Summary for ${title}`;
+  const repoUrl = safeString(normalized.metadata?.repoUrl || normalized.metadata?.url || '');
+
+  return `---
+title: "${title}"
+date: ${today}
+type: ${safeString(normalized.type, 'digest')}
+description: ${toYamlBlock(description)}
+tags:
+${toYamlList(tags)}
+repo: ${title}
+repo_url: ${repoUrl}
+source_id: ${safeString(normalized.sourceId)}
+generated_by: smart-github-summary
+---
+# ${title}
+`;
+}
+
 export function buildMarkdownSummary({ normalized, metadata, summary, keyPoints, actionItems }) {
   const tagInputs = [
     'github',
@@ -79,27 +115,12 @@ export function buildMarkdownSummary({ normalized, metadata, summary, keyPoints,
     .map(normalizeTag)
     .filter(Boolean);
   const tags = [...new Set(tagInputs)].slice(0, 8);
-  const title = safeString(normalized.repo || metadata.repo || 'unknown/unknown');
-  const repoUrl = safeString(normalized.metadata?.repoUrl || normalized.metadata?.url || '');
-  const description = safeString(metadata.description);
 
   const sections = [
-    `# ${title}`,
+    buildSummaryFrontmatter({ normalized, metadata, tags }),
+    '',
+    summary.trim(),
   ];
-
-  if (repoUrl) {
-    sections.push('', `Repository: ${repoUrl}`);
-  }
-
-  if (description) {
-    sections.push('', description);
-  }
-
-  if (tags.length > 0) {
-    sections.push('', `Tags: ${tags.join(', ')}`);
-  }
-
-  sections.push('', summary.trim());
 
   if (keyPoints.length > 0) {
     sections.push('', '## Key Points', ...keyPoints.map(point => `- ${point}`));
