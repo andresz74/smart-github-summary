@@ -42,3 +42,4 @@ chrome-extension-*
 ~$*
 
 package-lock.json
+firebaseServiceAccount.json
